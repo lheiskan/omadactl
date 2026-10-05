@@ -1,0 +1,15 @@
+# Built binaries. `go build ./...` drops them in the repo root, so ignore both
+# that and an explicit bin/.
+/omadactl
+/dhcpanalyze
+bin/
+
+# Credentials are read from ~/.config/omada/config.json (mode 600), never here.
+config.json
+*.pem
+*.key
+
+go.work
+go.work.sum
+
+.DS_Store
