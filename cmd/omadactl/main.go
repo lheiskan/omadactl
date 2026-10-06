@@ -62,7 +62,8 @@ commands using the internal web API (need username/password):
                     e.g. web 'sites/{site}/eaps/AA-BB-CC-DD-EE-FF'
 
 flags:
-  -controller URL   controller base URL (default: from config)
+  -api-url URL      controller Interface Access Address (default: from config).
+                    NOT the web UI address -- see the README.
   -site NAME|ID     site to query (default: the only site)
   -since DURATION   time window for 'events' and 'alerts' (default 24h)
   -insecure         skip TLS verification (default true; controllers self-sign)
@@ -102,7 +103,9 @@ func main() {
 func run() error {
 	fs := flag.NewFlagSet("omadactl", flag.ContinueOnError)
 	var (
-		controller = fs.String("controller", "", "controller base URL, e.g. https://192.168.1.10:443")
+		apiURL = fs.String("api-url", "", "controller Interface Access Address, e.g. https://192.168.1.10:443")
+		// Deprecated spelling, kept so existing scripts keep working.
+		controller = fs.String("controller", "", "deprecated alias for -api-url")
 		site       = fs.String("site", "", "site name or id (default: the only site)")
 		insecure   = fs.Bool("insecure", true, "skip TLS verification")
 		compact    = fs.Bool("compact", false, "emit one-line JSON")
@@ -140,8 +143,10 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	if *controller != "" {
-		fc.Controller = *controller
+	if *apiURL != "" {
+		fc.APIURL = *apiURL
+	} else if *controller != "" {
+		fc.APIURL = *controller
 	}
 	if *site != "" {
 		fc.Site = *site
@@ -150,8 +155,10 @@ func run() error {
 	if isFlagSet(fs, "insecure") {
 		fc.Insecure = insecure
 	}
-	if fc.Controller == "" {
-		return fmt.Errorf("no controller URL: pass -controller or set it in %s", configPath())
+	if fc.APIURL == "" {
+		return fmt.Errorf("no api url: pass -api-url or set api_url in %s. "+
+			"It is the Interface Access Address from the Open API application's "+
+			"View dialog, not the web UI address", configPath())
 	}
 
 	out := &emitter{compact: *compact}
@@ -162,7 +169,7 @@ func run() error {
 
 	// info needs no credentials, so handle it before anything is constructed.
 	if cmd == "info" {
-		info, err := omada.FetchInfo(ctx, fc.Controller, fc.insecure())
+		info, err := omada.FetchInfo(ctx, fc.APIURL, fc.insecure())
 		if err != nil {
 			return err
 		}
@@ -182,7 +189,7 @@ func run() error {
 func runOpen(ctx context.Context, args []string, fc fileConfig, query url.Values, since time.Duration, out *emitter) error {
 	cmd := args[0]
 	c, err := omada.New(omada.Config{
-		Controller:   fc.Controller,
+		APIURL:       fc.APIURL,
 		OmadacID:     fc.OmadacID,
 		ClientID:     fc.ClientID,
 		ClientSecret: fc.ClientSecret,
@@ -295,11 +302,11 @@ func runOpen(ctx context.Context, args []string, fc fileConfig, query url.Values
 func runWeb(ctx context.Context, args []string, fc fileConfig, query url.Values, since time.Duration, out *emitter) error {
 	cmd := args[0]
 	wc, err := omada.NewWeb(omada.WebConfig{
-		Controller: fc.Controller,
-		OmadacID:   fc.OmadacID,
-		Username:   fc.Username,
-		Password:   fc.Password,
-		Insecure:   fc.insecure(),
+		APIURL:   fc.APIURL,
+		OmadacID: fc.OmadacID,
+		Username: fc.Username,
+		Password: fc.Password,
+		Insecure: fc.insecure(),
 	})
 	if err != nil {
 		return err

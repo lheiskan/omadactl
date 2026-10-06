@@ -21,7 +21,14 @@ import (
 // an OMADA_* environment variable, and the controller URL additionally by a
 // flag, so credentials stay out of shell history and process listings.
 type fileConfig struct {
-	Controller   string `json:"controller"`
+	// APIURL is the controller's Interface Access Address, shown in the View
+	// dialog of the Open API application itself. It is NOT the web UI address:
+	// the UI port answers every credentialed call with a 500 HTML page, the same
+	// whether credentials are valid, wrong or absent.
+	APIURL string `json:"api_url"`
+	// Controller is the former name for APIURL, still accepted so existing
+	// configs keep working. APIURL wins when both are present.
+	Controller   string `json:"controller,omitempty"`
 	OmadacID     string `json:"omadac_id"`
 	ClientID     string `json:"client_id"`
 	ClientSecret string `json:"client_secret"`
@@ -73,8 +80,10 @@ func loadConfig() (fileConfig, error) {
 			return fc, err
 		}
 	}
-	if v := os.Getenv("OMADA_CONTROLLER"); v != "" {
-		fc.Controller = v
+	if v := os.Getenv("OMADA_API_URL"); v != "" {
+		fc.APIURL = v
+	} else if v := os.Getenv("OMADA_CONTROLLER"); v != "" {
+		fc.APIURL = v
 	}
 	if v := os.Getenv("OMADA_ID"); v != "" {
 		fc.OmadacID = v
@@ -97,6 +106,11 @@ func loadConfig() (fileConfig, error) {
 	if v := os.Getenv("OMADA_INSECURE"); v != "" {
 		b := v == "1" || strings.EqualFold(v, "true")
 		fc.Insecure = &b
+	}
+	// Fall back to the old key last, so api_url and OMADA_API_URL both take
+	// precedence over a legacy "controller" entry.
+	if fc.APIURL == "" {
+		fc.APIURL = fc.Controller
 	}
 	return fc, nil
 }

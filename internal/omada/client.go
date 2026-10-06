@@ -39,7 +39,7 @@ import (
 
 // Config is everything needed to reach one controller.
 type Config struct {
-	Controller   string // base URL, e.g. https://192.168.1.10:8043
+	APIURL       string // Interface Access Address, e.g. https://192.168.1.10:443
 	OmadacID     string // from GET /api/info, field omadacId
 	ClientID     string // Open API application client id
 	ClientSecret string // Open API application client secret
@@ -59,8 +59,8 @@ type Client struct {
 // New validates the config and prepares an HTTP client. It does not contact
 // the controller; the first request fetches a token.
 func New(cfg Config) (*Client, error) {
-	if cfg.Controller == "" {
-		return nil, errors.New("controller URL is empty")
+	if cfg.APIURL == "" {
+		return nil, errors.New("api url is empty")
 	}
 	if cfg.OmadacID == "" {
 		return nil, errors.New("omadac id is empty")
@@ -68,7 +68,7 @@ func New(cfg Config) (*Client, error) {
 	if cfg.ClientID == "" || cfg.ClientSecret == "" {
 		return nil, errors.New("client id/secret are empty: create an Open API application under Global View -> Settings -> Platform Integration")
 	}
-	cfg.Controller = strings.TrimRight(cfg.Controller, "/")
+	cfg.APIURL = strings.TrimRight(cfg.APIURL, "/")
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 20 * time.Second
 	}
@@ -220,12 +220,12 @@ func (c *Client) url(path string) string {
 	p := strings.TrimLeft(path, "/")
 	switch {
 	case strings.HasPrefix(p, "openapi/"):
-		return c.cfg.Controller + "/" + p
+		return c.cfg.APIURL + "/" + p
 	case strings.HasPrefix(p, "v1/"), strings.HasPrefix(p, "v2/"):
 		ver, rest, _ := strings.Cut(p, "/")
-		return c.cfg.Controller + "/openapi/" + ver + "/" + c.cfg.OmadacID + "/" + rest
+		return c.cfg.APIURL + "/openapi/" + ver + "/" + c.cfg.OmadacID + "/" + rest
 	default:
-		return c.cfg.Controller + "/openapi/v1/" + c.cfg.OmadacID + "/" + p
+		return c.cfg.APIURL + "/openapi/v1/" + c.cfg.OmadacID + "/" + p
 	}
 }
 
@@ -244,6 +244,19 @@ func (c *Client) send(req *http.Request, path string) (json.RawMessage, error) {
 		snippet := string(raw)
 		if len(snippet) > 200 {
 			snippet = snippet[:200] + "..."
+		}
+		// An HTML body from an Omada controller means one thing in practice: the
+		// request went to the web UI port rather than the API address. The UI
+		// answers every credentialed call with a 500 HTML page, identically
+		// whether credentials are valid, wrong or absent -- which reads exactly
+		// like an auth failure and sends people debugging the wrong thing.
+		if looksLikeHTML(raw) {
+			// The HTML itself tells the reader nothing useful, so do not paste 200
+			// characters of Tomcat markup over the actual explanation.
+			return nil, fmt.Errorf("omada api %s: http %d with an HTML body, which is "+
+				"what the web UI port returns for API calls. The api url must be the "+
+				"Interface Access Address from the Open API application's View dialog, "+
+				"not the web UI address", path, resp.StatusCode)
 		}
 		return nil, fmt.Errorf("omada api %s: http %d, unparseable response: %s", path, resp.StatusCode, snippet)
 	}
@@ -289,7 +302,7 @@ func (c *Client) fetchToken(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	u := c.cfg.Controller + "/openapi/authorize/token?grant_type=client_credentials"
+	u := c.cfg.APIURL + "/openapi/authorize/token?grant_type=client_credentials"
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -328,7 +341,7 @@ func (c *Client) cacheFile() string {
 	if c.cfg.CacheDir == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(c.cfg.Controller + "|" + c.cfg.OmadacID + "|" + c.cfg.ClientID))
+	sum := sha256.Sum256([]byte(c.cfg.APIURL + "|" + c.cfg.OmadacID + "|" + c.cfg.ClientID))
 	return filepath.Join(c.cfg.CacheDir, "token-"+hex.EncodeToString(sum[:8])+".json")
 }
 
@@ -371,4 +384,11 @@ func (c *Client) dropCachedToken() {
 	if path := c.cacheFile(); path != "" {
 		_ = os.Remove(path)
 	}
+}
+
+// looksLikeHTML reports whether a response body is an HTML document rather than
+// the JSON envelope every real Omada endpoint returns.
+func looksLikeHTML(raw []byte) bool {
+	head := strings.ToLower(strings.TrimSpace(string(raw)))
+	return strings.HasPrefix(head, "<!doctype html") || strings.HasPrefix(head, "<html")
 }

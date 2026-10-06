@@ -37,10 +37,10 @@ func FetchInfo(ctx context.Context, controller string, insecure bool) (*Info, er
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 	c := &Client{
-		cfg: Config{Controller: strings.TrimRight(controller, "/")},
+		cfg: Config{APIURL: strings.TrimRight(controller, "/")},
 		hc:  &http.Client{Transport: tr, Timeout: 15 * time.Second},
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.Controller+"/api/info", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cfg.APIURL+"/api/info", nil)
 	if err != nil {
 		return nil, err
 	}

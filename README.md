@@ -1,77 +1,53 @@
 # omadactl
 
 Reads a TP-Link Omada controller and prints JSON on stdout, one document per
-command. Built so an **LLM agent — or any other automated consumer** — can
-extract live network data: per-client RSSI, SNR, band, negotiated rate, AP
-association and traffic, device and radio detail, and the site event log.
-Without it you are limited to the DHCP lines that survive into a Site Event CSV
-export, or to scraping the UI.
+command. Built so an LLM agent can extract live network data: per-client RSSI,
+SNR, band, negotiated rate, AP association and traffic, device and radio detail,
+and the site event log.
 
-Design rules that follow from having a machine as the caller:
-
-- **One JSON document per command** on stdout. Errors go to stderr with a
-  non-zero exit, so nothing has to be parsed out of the payload.
-- **List commands always emit an array**, even for zero or one row — a consumer
-  never needs a special case for "exactly one client is connected".
-- **Nothing is interactive.** Credentials come from a config file or the
-  environment; paging and token caching are handled internally.
-- **It knows nothing about any particular network.** Controller address, site
-  and credentials are all inputs.
+Developed for controller version **6.3.0.45** (an OC300). Uses some
+internal/unstable APIs so when using against some other versions some features
+might be missing or broken.
 
 ## Install
 
 ```sh
 go install github.com/lheiskan/omadactl/cmd/omadactl@latest
 ```
-
-Developed against controller **6.3.0.45** (an OC300).
-
-> **Before adding an endpoint, read the API reference** —
-> [`docs/api-documentation.md`](docs/api-documentation.md) explains where it
-> lives, which parts are fetchable and which need a browser, and how to find an
-> operation. TP-Link adds endpoints every release; the published spec states
-> required parameters and permissions. Probe only where the docs are silent.
-
-## The port gotcha
-
-**The APIs are not on the web UI port.** The UI answers on 8043; both the Open
-API *and* the internal web API live on **443**. Hitting
-`:8043/openapi/authorize/token` returns an HTTP 500 Tomcat error page — not a
-JSON error, and identically whether your credentials are valid, invalid, or the
-application does not exist at all. `:8043/{omadacId}/api/v2/login` 500s the same
-way. That failure mode is indistinguishable from a broken credential, so state
-it plainly: if a call 500s with an HTML body, check the port before anything
-else.
-
-The authoritative value is the **Interface Access Address**, shown in the
-controller UI in the *view* dialog of the Open API application itself (not in
-the page header, and not visible at all until an application exists). Use
-exactly what it says.
-
 ## One-time setup
 
-1. Find the controller and its id (needs no credentials — any port works here):
+The one value people get wrong is the address. **`api_url` is the controller's
+*Interface Access Address*, not its web UI address.** The UI port answers every
+credentialed call with an HTTP 500 HTML page — identically whether your
+credentials are valid, wrong, or absent — so a wrong address looks exactly like
+an auth failure. The setup below therefore gets that address first, and uses
+only that one address throughout.
 
-   ```sh
-   go run ./cmd/omadactl -controller https://192.168.1.10:8043 info
-   ```
-
-2. In the controller UI: **Global View → Settings → Platform Integration →
+1. In the controller UI: **Global View → Settings → Platform Integration →
    Open API → Add New App**
    - authorization mode **Client Credentials**
    - a **Viewer** role, so the token cannot change the network
    - scoped to the site you want to query
 
-   Then open the app's *view* dialog and note the **Interface Access Address**.
+   Then open the app's **View** dialog and note three things: the **client id**,
+   the **client secret**, and the **Interface Access Address**. There is no fixed
+   port — use exactly what the dialog says.
+
+2. Get the `omadacId`, using that address. `info` is the only command needing no
+   credentials:
+
+   ```sh
+   omadactl -api-url https://192.168.1.10:443 info
+   ```
 
 3. Put it all in `~/.config/omada/config.json` (mode 0600):
 
    ```json
    {
-     "controller": "https://192.168.1.10:443",
-     "omadac_id": "…from step 1…",
-     "client_id": "…",
-     "client_secret": "…",
+     "api_url": "https://192.168.1.10:443",
+     "omadac_id": "…from step 2…",
+     "client_id": "…from step 1…",
+     "client_secret": "…from step 1…",
      "username": "…",
      "password": "…",
      "insecure": true
@@ -83,10 +59,16 @@ exactly what it says.
    reads.
 
    `insecure` defaults to true because controllers ship a self-signed
-   certificate. Every field can be overridden by `OMADA_CONTROLLER`,
+   certificate.
+
+   Every field can be overridden by the environment — `OMADA_API_URL`,
    `OMADA_ID`, `OMADA_CLIENT_ID`, `OMADA_CLIENT_SECRET`, `OMADA_USERNAME`,
-   `OMADA_PASSWORD`, `OMADA_SITE`, `OMADA_INSECURE`, or by `-controller` /
-   `-site` / `-insecure`.
+   `OMADA_PASSWORD`, `OMADA_SITE`, `OMADA_INSECURE` — or by the `-api-url`,
+   `-site` and `-insecure` flags. `OMADA_CONFIG` moves the config file itself.
+
+   > The address was previously called `controller`, with the flag `-controller`
+   > and the variable `OMADA_CONTROLLER`. All three are still accepted, so old
+   > configs keep working; `api_url` wins if both are present.
 
 4. Check it:
 
@@ -197,29 +179,36 @@ then confirm the response shape against the controller.
 
 ## Notes
 
-Paging is handled automatically on both surfaces (they disagree on the
-parameter names — `page`/`pageSize` versus `currentPage`/`currentPageSize`).
-Flags may appear before or after the command; `omadactl get <path> -query k=v`
-works. (Go's `flag` package would otherwise stop at the first positional and
-silently drop those flags — a failure that surfaces as a confusing server-side
-error, not a usage error.)
-
-List commands always emit a JSON array, even for zero or one row, so a consumer
-never needs a special case for "exactly one client is connected"; `client`/`ap`
-emit the object itself. MACs may be written with `:` or `-`.
-
 The Open API access token is cached under `~/.cache/omada/` (0600). The web API
 session is not cached — it costs one login request per invocation.
 
-## Licence
+Design rules that follow from having a machine as the caller:
 
-GPL-3.0-or-later. See [LICENSE](LICENSE).
+- **One JSON document per command** on stdout. Errors go to stderr with a
+  non-zero exit, so nothing has to be parsed out of the payload.
+- **List commands always emit an array**, even for zero or one row — a consumer
+  never needs a special case for "exactly one client is connected".
+- **Nothing is interactive.** Credentials come from a config file or the
+  environment; paging and token caching are handled internally.
 
-Copyright (C) 2026 Lauri Heiskanen
 
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation, either version 3 of the License, or (at your option) any later
-version. It is distributed in the hope that it will be useful, but WITHOUT ANY
-WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
-PARTICULAR PURPOSE. See the GNU General Public License for more details.
+Before adding an endpoint, read the API reference.
+[`docs/api-documentation.md`](docs/api-documentation.md) explains where it
+lives, which parts are fetchable and which need a browser, and how to find an
+operation. TP-Link adds endpoints every release; the published spec states
+required parameters and permissions. Probe only where the docs are silent.
+
+**The APIs are not on the web UI port.** The UI answers on 8043; both the Open
+API *and* the internal web API live on **443**. 
+
+The authoritative value is the **Interface Access Address**, shown in the
+controller UI in the *View* dialog of the Open API application itself (not in
+the page header, and not visible at all until an application exists). Use
+exactly what it says — that is what `api_url` wants.
+
+Hitting `:8043/openapi/authorize/token` returns an HTTP 500 Tomcat error page —
+not a JSON error, and identically whether your credentials are valid, invalid,
+or the application does not exist at all. `:8043/{omadacId}/api/v2/login` 500s
+the same way. That failure mode is indistinguishable from a broken credential,
+so state it plainly: if a call 500s with an HTML body, check the port before
+anything else.

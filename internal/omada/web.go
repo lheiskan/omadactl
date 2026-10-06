@@ -39,19 +39,19 @@ type WebClient struct {
 
 // WebConfig is the credentials and address for the internal API.
 type WebConfig struct {
-	Controller string
-	OmadacID   string
-	Username   string
-	Password   string
-	Insecure   bool
-	Timeout    time.Duration
+	APIURL   string
+	OmadacID string
+	Username string
+	Password string
+	Insecure bool
+	Timeout  time.Duration
 }
 
 // NewWeb prepares a client with a cookie jar. It does not log in; the first
 // request does that.
 func NewWeb(cfg WebConfig) (*WebClient, error) {
-	if cfg.Controller == "" {
-		return nil, errors.New("controller URL is empty")
+	if cfg.APIURL == "" {
+		return nil, errors.New("api url is empty")
 	}
 	if cfg.OmadacID == "" {
 		return nil, errors.New("omadac id is empty")
@@ -59,7 +59,7 @@ func NewWeb(cfg WebConfig) (*WebClient, error) {
 	if cfg.Username == "" || cfg.Password == "" {
 		return nil, errors.New("username/password are empty: add them to the config to use the web API")
 	}
-	cfg.Controller = strings.TrimRight(cfg.Controller, "/")
+	cfg.APIURL = strings.TrimRight(cfg.APIURL, "/")
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 20 * time.Second
 	}
@@ -76,7 +76,7 @@ func NewWeb(cfg WebConfig) (*WebClient, error) {
 
 // prefix is the path every internal endpoint hangs off.
 func (w *WebClient) prefix() string {
-	return w.cfg.Controller + "/" + w.cfg.OmadacID + "/api/v2/"
+	return w.cfg.APIURL + "/" + w.cfg.OmadacID + "/api/v2/"
 }
 
 // Login establishes the session. The session lives in the cookie jar, so this
