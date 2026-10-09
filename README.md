@@ -6,8 +6,11 @@ SNR, band, negotiated rate, AP association and traffic, device and radio detail,
 and the site event log.
 
 Developed for controller version **6.3.0.45** (an OC300). Uses some
-internal/unstable APIs so when using against some other versions some features
+internal/unstable APIs so when using against other versions some features
 might be missing or broken.
+
+Can be used to snapshot network states to understand, troubleshoot and improve
+network performance based on live data.
 
 ## Install
 
@@ -16,25 +19,14 @@ go install github.com/lheiskan/omadactl/cmd/omadactl@latest
 ```
 ## One-time setup
 
-The one value people get wrong is the address. **`api_url` is the controller's
-*Interface Access Address*, not its web UI address.** The UI port answers every
-credentialed call with an HTTP 500 HTML page — identically whether your
-credentials are valid, wrong, or absent — so a wrong address looks exactly like
-an auth failure. The setup below therefore gets that address first, and uses
-only that one address throughout.
-
 1. In the controller UI: **Global View → Settings → Platform Integration →
    Open API → Add New App**
-   - authorization mode **Client Credentials**
-   - a **Viewer** role, so the token cannot change the network
-   - scoped to the site you want to query
+   - authorization mode **Client Credentials** a **Viewer** role
 
    Then open the app's **View** dialog and note three things: the **client id**,
-   the **client secret**, and the **Interface Access Address**. There is no fixed
-   port — use exactly what the dialog says.
+   the **client secret**, and the **Interface Access Address**. 
 
-2. Get the `omadacId`, using that address. `info` is the only command needing no
-   credentials:
+2. Get the `omadacId`, using the **Interface Access Address** from above (https://192.168.1.10:443)
 
    ```sh
    omadactl -api-url https://192.168.1.10:443 info
@@ -44,7 +36,7 @@ only that one address throughout.
 
    ```json
    {
-     "api_url": "https://192.168.1.10:443",
+     "api_url": "https://192.168.1.10:443", // this is the 'interface access address from step 1 above'
      "omadac_id": "…from step 2…",
      "client_id": "…from step 1…",
      "client_secret": "…from step 1…",
@@ -105,82 +97,16 @@ These use the internal web API (username/password):
 The **Open API** (`get`) is versioned and survives firmware upgrades, but its
 endpoint set is small. The **internal web API** (`web`) is what the controller's
 own UI calls — much richer, but unversioned, so treat any `web` path as liable
-to change. Prefer Open API where an equivalent exists.
+to change. Prefer the Open API where an equivalent exists.
 
-Both return the same JSON envelope and distinguish their failure modes
-usefully, which makes the surface enumerable by probing:
-
-- `-1600 Unsupported request path` — no such endpoint
-- `-1001 Invalid request parameters` / `-1 General error` — endpoint exists, arguments are wrong
-- `-44118 This interface only supports the authorization code mode` — exists, but not reachable with client-credentials auth
-
-Confirmed on Open API: `sites`, `sites/{site}/clients`,
-`sites/{site}/clients/{mac}`, `sites/{site}/devices`, `sites/{site}/aps/{mac}`,
-`sites/{site}/insight/clients`, `sites/{site}/logs/events`,
-`sites/{site}/logs/alerts`, `roles`.
-
-Also confirmed, for radio and RF work:
-
-| path | what it gives |
-|---|---|
-| `sites/{site}/band-steering` | `mode`: 0 disable, 1 prefer 5/6 GHz, 2 balance |
-| `sites/{site}/channel-limit` | site-wide channel restriction on/off |
-| `sites/{site}/rfPlanning` | auto channel/width/band/power deploy flags, schedule |
-| `sites/{site}/rfPlanning/result` | last RF-planning run (`status` only when none) |
-| `sites/{site}/aps/{mac}/radio-config` | per-radio `channel` (an *index*), `channelWidth`, `txPower` |
-| `sites/{site}/aps/{mac}/available-channel` | the index → channel/freq/width table |
-| `sites/{site}/aps/{mac}/load-balance` | per-AP max-clients and min-RSSI flags |
-| `sites/{site}/aps/{mac}/rf-scan-result` | last RF scan (`status` only when none) |
-
-`radio-config`'s `channel` is a **1-based index into `available-channel`**, not a
-channel number, and `channelWidth` is an enum (`2`=20, `3`=40, `4`=2.4 GHz auto,
-`5`=80, `6`=5 GHz auto) — so a config of `channel: "2"`, `channelWidth: "5"` means
-*channel 40 at a fixed 80 MHz*. Read the two together or the answer is wrong. Confirmed absent there:
-`sites/{site}/events`, `sites/{site}/dashboard`, `sites/{site}/networks`,
-`sites/{site}/wlans`, `sites/{site}/statistics`, and the plural `sites/{site}/aps`
-list form (use `devices`).
-
-`sites/{site}/logs/events` **requires** `filters.timeStart` and
-`filters.timeEnd` in epoch milliseconds and returns `-1 General error` without
-them, which reads like a server fault rather than a missing argument. Optional
-`filters.module` is one of `System`, `Device`, `Client`. This is the endpoint
-the Site Event CSV export comes from, so it replaces the manual export:
-
-```sh
-go run ./cmd/omadactl events -since 168h    # 3278 events over the last week
-```
-
-Confirmed on the web API: `sites`, `sites/{site}/devices`,
-`sites/{site}/eaps/{mac}`, `sites/{site}/clients/{mac}`,
-`sites/{site}/insight/clients`, `sites/{site}/events`, `sites/{site}/alerts`,
-`sites/{site}/dashboard/overviewDiagram`,
-`sites/{site}/dashboard/clientsDistribution`, `sites/{site}/setting/wlans`,
-`sites/{site}/setting/lan/networks`, `users/current`.
-
-This controller serves no local `/openapi/doc.html` — with a valid access token
-it returns a clean 404. Use the published reference instead; see
-[`docs/api-documentation.md`](docs/api-documentation.md) for how to reach it and
-`docs/openapi-operations-oc_series-6.2.14.txt` for the full operation list.
-
-Not every Open API endpoint is under `/openapi/v1/` — the log-notification
-settings are v2, for instance. A `get` path may name its own version, or be
-given fully qualified:
-
-```sh
-go run ./cmd/omadactl get 'sites/{site}/clients' -query 'filters.connectType=1'
-go run ./cmd/omadactl get 'v2/sites/{site}/site/log-notification'
-go run ./cmd/omadactl web 'sites/{site}/dashboard/clientsDistribution'
-```
-
-Beware that the published docs lag firmware: 6.2.14 documents that response as
-`logNotifications`, while 6.3.0.45 returns `alertNotifications` and
-`eventNotifications`. Read the docs for the path and the required parameters,
-then confirm the response shape against the controller.
+[`docs/endpoints.md`](docs/endpoints.md) lists what has actually been reached on
+a controller, on both surfaces, and the error codes that let you probe for more.
 
 ## Notes
 
 The Open API access token is cached under `~/.cache/omada/` (0600). The web API
-session is not cached — it costs one login request per invocation.
+session is not cached, which costs one login per invocation — see
+[`AGENTS.md`](AGENTS.md) for why that is deliberate.
 
 Design rules that follow from having a machine as the caller:
 
@@ -191,24 +117,7 @@ Design rules that follow from having a machine as the caller:
 - **Nothing is interactive.** Credentials come from a config file or the
   environment; paging and token caching are handled internally.
 
+Flags may appear before or after the command, and MACs may be written with `:`
+or `-`.
 
-Before adding an endpoint, read the API reference.
-[`docs/api-documentation.md`](docs/api-documentation.md) explains where it
-lives, which parts are fetchable and which need a browser, and how to find an
-operation. TP-Link adds endpoints every release; the published spec states
-required parameters and permissions. Probe only where the docs are silent.
-
-**The APIs are not on the web UI port.** The UI answers on 8043; both the Open
-API *and* the internal web API live on **443**. 
-
-The authoritative value is the **Interface Access Address**, shown in the
-controller UI in the *View* dialog of the Open API application itself (not in
-the page header, and not visible at all until an application exists). Use
-exactly what it says — that is what `api_url` wants.
-
-Hitting `:8043/openapi/authorize/token` returns an HTTP 500 Tomcat error page —
-not a JSON error, and identically whether your credentials are valid, invalid,
-or the application does not exist at all. `:8043/{omadacId}/api/v2/login` 500s
-the same way. That failure mode is indistinguishable from a broken credential,
-so state it plainly: if a call 500s with an HTML body, check the port before
-anything else.
+Changing the code? [`AGENTS.md`](AGENTS.md) has the invariants and the traps.
