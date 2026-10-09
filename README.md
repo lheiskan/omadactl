@@ -1,5 +1,7 @@
 # omadactl
 
+Automated network data collection utility for TP-Link Omada networks.
+
 Reads a TP-Link Omada controller and prints JSON on stdout, one document per
 command. Built so an LLM agent can extract live network data: per-client RSSI,
 SNR, band, negotiated rate, AP association and traffic, device and radio detail,
@@ -26,7 +28,7 @@ go install github.com/lheiskan/omadactl/cmd/omadactl@latest
    Then open the app's **View** dialog and note three things: the **client id**,
    the **client secret**, and the **Interface Access Address**. 
 
-2. Get the `omadacId`, using the **Interface Access Address** from above (https://192.168.1.10:443)
+2. Get the `omadacId`, using the **Interface Access Address** (https://192.168.1.10:443)
 
    ```sh
    omadactl -api-url https://192.168.1.10:443 info
@@ -36,7 +38,7 @@ go install github.com/lheiskan/omadactl/cmd/omadactl@latest
 
    ```json
    {
-     "api_url": "https://192.168.1.10:443", // this is the 'interface access address from step 1 above'
+     "api_url": "https://192.168.1.10:443",
      "omadac_id": "…from step 2…",
      "client_id": "…from step 1…",
      "client_secret": "…from step 1…",
